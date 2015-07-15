@@ -24,7 +24,6 @@ module Rack
         return false if codes.include?(code)
 
         current_period = period.respond_to?(:call) ? period.call(req) : period
-        current_limit  = limit.respond_to?(:call) ? limit.call(req) : limit
         key            = "#{name}:#{discriminator}"
         cache.count(key, current_period)
       end
@@ -36,7 +35,7 @@ module Rack
         current_period = period.respond_to?(:call) ? period.call(req) : period
         current_limit  = limit.respond_to?(:call) ? limit.call(req) : limit
         key            = "#{name}:#{discriminator}"
-        count          = cache.read_count(key, current_period) || 0
+        count          = cache.read_count(key, current_period)
 
         data = {
           :count => count,

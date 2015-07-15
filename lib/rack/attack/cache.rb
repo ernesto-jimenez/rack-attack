@@ -25,7 +25,7 @@ module Rack
 
       def read_count(unprefixed_key, period)
         key, _ = key_and_expiry(unprefixed_key, period)
-        store.read(key)
+        (store.read(key) || 0).to_i
       end
 
       def write(unprefixed_key, value, expires_in)
