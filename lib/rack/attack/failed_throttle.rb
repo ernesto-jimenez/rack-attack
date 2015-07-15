@@ -11,7 +11,7 @@ module Rack
         @limit  = options[:limit]
         @period = options[:period].respond_to?(:call) ? options[:period] : options[:period].to_i
         @type   = options.fetch(:type, :failed_throttle)
-        @codes  = options[:ok_codes] || (200..300)
+        @codes  = options[:ok_codes] || (200..400)
       end
 
       def cache
