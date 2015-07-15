@@ -5,6 +5,7 @@ class Rack::Attack
   autoload :Cache,           'rack/attack/cache'
   autoload :Check,           'rack/attack/check'
   autoload :Throttle,        'rack/attack/throttle'
+  autoload :FailedThrottle,  'rack/attack/failed_throttle'
   autoload :Whitelist,       'rack/attack/whitelist'
   autoload :Blacklist,       'rack/attack/blacklist'
   autoload :Track,           'rack/attack/track'
@@ -31,14 +32,19 @@ class Rack::Attack
       self.throttles[name] = Throttle.new(name, options, block)
     end
 
+    def failed_throttle(name, options, &block)
+      self.failed_throttles[name] = FailedThrottle.new(name, options, block)
+    end
+
     def track(name, options = {}, &block)
       self.tracks[name] = Track.new(name, options, block)
     end
 
-    def whitelists; @whitelists ||= {}; end
-    def blacklists; @blacklists ||= {}; end
-    def throttles;  @throttles  ||= {}; end
-    def tracks;     @tracks     ||= {}; end
+    def whitelists;        @whitelists        ||= {}; end
+    def blacklists;        @blacklists        ||= {}; end
+    def throttles;         @throttles         ||= {}; end
+    def failed_throttles;  @failed_throttles  ||= {}; end
+    def tracks;            @tracks            ||= {}; end
 
     def whitelisted?(req)
       whitelists.any? do |name, whitelist|
@@ -58,6 +64,18 @@ class Rack::Attack
       end
     end
 
+    def throttle_failed?(req)
+      failed_throttles.any? do |name, failed_throttle|
+        failed_throttle[req]
+      end
+    end
+
+    def track_failed_throttle(req, code)
+      failed_throttles.each_value do |failed_throttle|
+        failed_throttle.track(req, code)
+      end
+    end
+
     def tracked?(req)
       tracks.each_value do |tracker|
         tracker[req]
@@ -73,7 +91,7 @@ class Rack::Attack
     end
 
     def clear!
-      @whitelists, @blacklists, @throttles, @tracks = {}, {}, {}, {}
+      @whitelists, @blacklists, @throttles, @failed_throttles, @tracks = {}, {}, {}, {}, {}
     end
 
   end
@@ -99,9 +117,13 @@ class Rack::Attack
       self.class.blacklisted_response.call(env)
     elsif throttled?(req)
       self.class.throttled_response.call(env)
+    elsif throttle_failed?(req)
+      self.class.throttled_response.call(env)
     else
       tracked?(req)
-      @app.call(env)
+      response = @app.call(env)
+      track_failed_throttle(req, response.first)
+      response
     end
   end
 
@@ -109,5 +131,7 @@ class Rack::Attack
   def_delegators self, :whitelisted?,
                        :blacklisted?,
                        :throttled?,
+                       :throttle_failed?,
+                       :track_failed_throttle,
                        :tracked?
 end
