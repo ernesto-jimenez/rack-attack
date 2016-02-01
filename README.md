@@ -4,7 +4,7 @@
 Rack::Attack is a rack middleware to protect your web app from bad clients.
 It allows *whitelisting*, *blacklisting*, *throttling*, and *tracking* based on arbitrary properties of the request.
 
-Throttle state is stored in a configurable cache (e.g. `Rails.cache`), presumably backed by memcached or redis ([at least gem v3.0.0](https://rubygems.org/gems/redis)).
+Throttle and fail2ban state is stored in a configurable cache (e.g. `Rails.cache`), presumably backed by memcached or redis ([at least gem v3.0.0](https://rubygems.org/gems/redis)).
 
 See the [Backing & Hacking blog post](http://www.kickstarter.com/backing-and-hacking/rack-attack-protection-from-abusive-clients) introducing Rack::Attack.
 
@@ -47,13 +47,13 @@ end
 *Tip:* The example in the wiki is a great way to get started:
 [Example Configuration](https://github.com/kickstarter/rack-attack/wiki/Example-Configuration)
 
-Optionally configure the cache store for throttling:
+Optionally configure the cache store for throttling or fail2ban filtering:
 
 ```ruby
 Rack::Attack.cache.store = ActiveSupport::Cache::MemoryStore.new # defaults to Rails.cache
 ```
 
-Note that `Rack::Attack.cache` is only used for throttling; not blacklisting & whitelisting. Your cache store must implement `increment` and `write` like [ActiveSupport::Cache::Store](http://api.rubyonrails.org/classes/ActiveSupport/Cache/Store.html).
+Note that `Rack::Attack.cache` is only used for throttling and fail2ban filtering; not blacklisting & whitelisting. Your cache store must implement `increment` and `write` like [ActiveSupport::Cache::Store](http://api.rubyonrails.org/classes/ActiveSupport/Cache/Store.html).
 
 ## How it works
 
@@ -83,7 +83,7 @@ def call(env)
 end
 ```
 
-Note: `Rack::Attack::Request` is just a subclass of `Rack::Attack` so that you
+Note: `Rack::Attack::Request` is just a subclass of `Rack::Request` so that you
 can cleanly monkey patch helper methods onto the
 [request object](https://github.com/kickstarter/rack-attack/blob/master/lib/rack/attack/request.rb).
 
@@ -104,7 +104,7 @@ A [Rack::Request](http://www.rubydoc.info/gems/rack/Rack/Request) object is pass
 # (blacklist & throttles are skipped)
 Rack::Attack.whitelist('allow from localhost') do |req|
   # Requests are allowed if the return value is truthy
-  '127.0.0.1' == req.ip
+  '127.0.0.1' == req.ip || '::1' == req.ip
 end
 ```
 
@@ -128,20 +128,26 @@ end
 `Fail2Ban.filter` can be used within a blacklist to block all requests from misbehaving clients.
 This pattern is inspired by [fail2ban](http://www.fail2ban.org/wiki/index.php/Main_Page).
 See the [fail2ban documentation](http://www.fail2ban.org/wiki/index.php/MANUAL_0_8#Jail_Options) for more details on
-how the parameters work.
+how the parameters work.  For multiple filters, be sure to put each filter in a separate blacklist and use a unique discriminator for each fail2ban filter.
 
 ```ruby
-# Block requests containing '/etc/password' in the params.
+# Block suspicious requests for '/etc/password' or wordpress specific paths.
 # After 3 blocked requests in 10 minutes, block all requests from that IP for 5 minutes.
 Rack::Attack.blacklist('fail2ban pentesters') do |req|
   # `filter` returns truthy value if request fails, or if it's from a previously banned IP
   # so the request is blocked
-  Rack::Attack::Fail2Ban.filter(req.ip, :maxretry => 3, :findtime => 10.minutes, :bantime => 5.minutes) do
-    # The count for the IP is incremented if the return value is truthy.
-    CGI.unescape(req.query_string) =~ %r{/etc/passwd}
+  Rack::Attack::Fail2Ban.filter("pentesters-#{req.ip}", :maxretry => 3, :findtime => 10.minutes, :bantime => 5.minutes) do
+    # The count for the IP is incremented if the return value is truthy
+    CGI.unescape(req.query_string) =~ %r{/etc/passwd} || 
+    req.path.include?('/etc/passwd') ||
+    req.path.include?('wp-admin') || 
+    req.path.include?('wp-login')
+    
   end
 end
 ```
+
+Note that `Fail2Ban` filters are not automatically scoped to the blacklist, so when using multiple filters in an application the scoping must be added to the discriminator e.g. `"pentest:#{req.ip}"`.
 
 #### Allow2Ban
 `Allow2Ban.filter` works the same way as the `Fail2Ban.filter` except that it *allows* requests from misbehaving
